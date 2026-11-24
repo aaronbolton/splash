@@ -424,6 +424,28 @@ def _server(args, model_dir, record):
     return command, environment
 
 
+def _router(args, model_dir):
+    """The command line and environment of the router serve runs as with
+    --switch-models: the same serve command line, which it reads again, and
+    the first model's prepared directory."""
+    command = [
+        str(paths.PYTHON),
+        "-u",
+        "-P",
+        "-m",
+        "install.router",
+        "serve",
+        *args.argv[1:],
+    ]
+    environment = dict(
+        os.environ,
+        PYTHONUNBUFFERED="1",
+        PYTHONPATH=str(ROOT),
+        SPLASH_ROUTER_MODEL_DIR=str(model_dir),
+    )
+    return command, environment
+
+
 def _serve_lock(port):
     return RUNTIME_DIR / f"serve-{port}.lock"
 
@@ -510,7 +532,11 @@ def serve(args):
                     "Splash is being upgraded; wait for the upgrade to finish",
                     serve_record.UPGRADE,
                 ) from None
-            command, environment = _server(args, _prepare_start(args), record)
+            model_dir = _prepare_start(args)
+            if args.switch_models:
+                command, environment = _router(args, model_dir)
+            else:
+                command, environment = _server(args, model_dir, record)
             os.set_inheritable(installation.fileno(), True)
             os.set_inheritable(lock.fileno(), True)
             _flush_console()
@@ -735,6 +761,12 @@ def parse_args(argv=None):
         help="skip vision preparation and loading; image and PDF input is refused",
     )
     model.add_argument(
+        "--switch-models",
+        action="store_true",
+        help="list every installed model in /v1/models and load the one a request "
+        "names, stopping the one loaded first; --model is the first",
+    )
+    model.add_argument(
         "--offline",
         action="store_true",
         help="start the installed model without contacting the Hugging Face Hub (as HF_HUB_OFFLINE=1)",
@@ -782,10 +814,15 @@ def parse_args(argv=None):
             parser.error("--mmproj requires --model-dir")
         if args.mmproj is not None and args.language_only:
             parser.error("--mmproj cannot be used with --language-only")
+        if args.switch_models and unix_socket.path(args.host) is not None:
+            parser.error("--switch-models listens on a TCP port, not a UNIX socket")
         serve_options.check_serve_arguments(parser, args)
     if client_args and args.command == "serve":
         parser.error("arguments after -- are only supported for coding clients")
     args.client_args = client_args
+    # The serve command line, which a router started in its place reads again
+    # (install/router.py).
+    args.argv = argv
     return args
 
 

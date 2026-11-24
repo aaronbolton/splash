@@ -482,6 +482,10 @@ extension LaunchOption {
             section: .api, kind: .toggle(on: true),
             requires: [Requirement("Needs a served model name.") { $0["--served-model-name"] != nil }]),
         LaunchOption(
+            flag: "--switch-models", title: "Switch models on request",
+            help: "The model list names every installed model, and a request for another one loads it in place of the one running.",
+            section: .api, kind: .toggle(on: true)),
+        LaunchOption(
             flag: "--sampling-default", title: "Sampling defaults",
             help: "The value of a sampling setting for requests that set none, as name=value, such as temperature=0.7.",
             section: .api,

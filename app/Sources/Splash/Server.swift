@@ -433,9 +433,36 @@ final class Server {
         return "\(option.title): \(refusal.2)"
     }
 
+    /// Whether `served`, the ID a server reports, is the model the app knows as `model`: model
+    /// files on this Mac are served under the ID the app gives them (`ServeSettings.localID`).
+    nonisolated static func names(_ served: String, _ model: String) -> Bool {
+        served == model || model.hasPrefix("/") && served == ServeSettings.localID(model)
+    }
+
+    /// Takes the server for starting `model`, which a request to a server that switches models
+    /// asked for, until its record says it is ready.
+    private func switched(to model: String) {
+        self.model = model
+        since = .now
+        step = .starting
+        stepSince = .now
+        warmup = nil
+        requests = []
+        activity = Activity()
+        phase = .starting
+    }
+
     /// Follows this start's server through its start, as its serve record gives it, until it
-    /// answers, then follows its status, which says more of a ready server than its record does.
+    /// answers, then follows its status, which says more of a ready server than its record does;
+    /// again for each model a server that switches models on request starts in its place.
     private func follow(_ pid: pid_t) async {
+        while !Task.isCancelled, phase == .starting {
+            await followStart(pid)
+            await followReady()
+        }
+    }
+
+    private func followStart(_ pid: pid_t) async {
         while !Task.isCancelled, phase == .starting {
             if let record = runtime.serveRecord(port: settings.port), record.pid == pid {
                 // Kept through the ready record, which has none, until the start ends.
@@ -460,8 +487,11 @@ final class Server {
             }
             try? await Task.sleep(for: .milliseconds(500))
         }
-        // Then its status while it serves: every 2 s, or every 10 s while nothing but the menu bar's
-        // icon shows it.
+    }
+
+    /// Its status while it serves: every 2 s, or every 10 s while nothing but the menu bar's icon
+    /// shows it.
+    private func followReady() async {
         var asked = ContinuousClock.now - .seconds(10)
         while !Task.isCancelled, phase == .ready {
             if !unwatched || ContinuousClock.now - asked >= .seconds(10) {
@@ -475,6 +505,12 @@ final class Server {
     /// Asks the server's status and takes what it reports.
     private func askStatus() async {
         guard let report = await status(), phase == .ready else { return }
+        // A server that switches models on request loads the one a request named in place of this
+        // one: its start is followed as one of the app's own is.
+        if settings["--switch-models"] == "true", let served = report.model, let model, !Self.names(served, model) {
+            switched(to: served)
+            return
+        }
         asleep = report.asleep
         recovering = report.recovering
         activity = report.activity
@@ -511,6 +547,9 @@ final class Server {
         /// asked, less the age of the snapshot the server answered from, as while a long prefill
         /// keeps the engine from answering (`transport.status_age_ms`); nil where it lists none.
         var taken: Date?
+        /// The model the server serves, or loads in place of the one before where it switches
+        /// models on request (`--switch-models`).
+        var model: String?
     }
 
     /// The report of `/status`'s body, if it is one, asked `now`.
@@ -550,11 +589,13 @@ final class Server {
                                                          written: request.generated_tokens ?? 0))
                 }
             },
-            taken: status.active_requests == nil ? nil : taken
+            taken: status.active_requests == nil ? nil : taken,
+            model: status.model
         )
     }
 
     private struct Status: Decodable {
+        let model: String?
         struct Capabilities: Decodable { let max_context_tokens: Int? }
         struct Weights: Decodable { let released: Bool? }
         struct Transport: Decodable {
