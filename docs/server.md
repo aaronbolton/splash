@@ -164,6 +164,7 @@ paths for `--model-dir`, `--draft-model` and `--mmproj`.
 | `--revision` | Default branch | Select an upstream target branch, tag, or commit. See [revisions](#revisions). |
 | `--draft-model` | The family's released DFlash2 draft | A compatible repository or local directory in its place. See [drafts](models.md#drafts). |
 | `--language-only` | Off | Skip vision loading; image and PDF input is rejected. See [vision](models.md#vision). |
+| `--switch-models` | Off | List every installed model in `/v1/models` and load the one a request names in place of the one loaded; `--model` loads first. See [switching models](#switching-models). |
 | `--offline` | Off | Start the installed model without asking the Hub, as `HF_HUB_OFFLINE=1` does. See [revisions](#revisions). |
 | `--port` | `SPLASH_PORT` or `8000` | HTTP port. |
 | `--host` | `127.0.0.1` | HTTP bind address, or `unix:PATH` for a UNIX socket. See [network and authentication](#network-and-authentication). |
@@ -1219,6 +1220,37 @@ splash serve --model mlx-community/Qwen3.8-27B-4bit --served-model-name local-qw
 
 Aliases cannot contain whitespace, control characters, `\`, `%`, `?`, `#`,
 or empty, `.` or `..` path segments. This keeps model discovery URLs unambiguous.
+
+## Switching models
+
+`--switch-models` serves every model installed on this Mac at one address,
+loading one at a time:
+
+```sh
+splash serve --model unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M --switch-models
+```
+
+`/v1/models` lists the loaded model first, as the server gives it, with
+`"loaded": true`, then every other installed model with `"loaded": false`. A
+request whose `model` names another installed model waits for the requests in
+flight to finish; the loaded model then stops, the named one loads, and the
+request goes on to it. Requests that come meanwhile wait for the switch.
+Requests that name no model, the loaded one, or one of its
+`--served-model-name` aliases go to the loaded model as they are.
+
+A switch takes as long as a start of that model. While one is under way,
+`/status` answers `503` with `{"status": "switching", "model": ID}`, and the
+serve record says `loading`, then `warming` and `ready` again, so the app
+follows it as it follows a start of its own. A switch that fails answers its
+request with `503` and `model_load_failed`, and the model loaded before it
+loads again. Clients that keep asking for different models make every request
+load a model, so give each client the model it keeps.
+
+The models listed are those the app lists: each `OWNER/REPO[:VARIANT]`
+installation, and a model installed with `--language-only` alone. A request
+cannot load model files on this Mac other than `--model-dir`'s, which has no
+installation of its own. The router listens on a TCP port, and runs each
+model's server behind it on a private UNIX socket in the runtime directory.
 
 ## Default reasoning effort
 
