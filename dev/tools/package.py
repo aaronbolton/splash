@@ -31,6 +31,7 @@ INSTALL_FILES = (
     "upstream.py",
     "local.py",
     "cached.py",
+    "router.py",
     "gguf.py",
     "requirements.txt",
     "suggested-models.tsv",
